@@ -31,11 +31,11 @@ def search_products_with_claude(query: str) -> list:
     Returns a list of product dictionaries
     """
     
-    prompt = f"""You are a shopping assistant. Search the web for products matching this query: "{query}"
+    prompt = """You are a shopping assistant. Search the web for products matching this query: """ + '"' + query + '"' + """
 
 Find 6-8 real products from different retailers. For each product, extract:
 - name: The full product name
-- brand: The brand/manufacturer
+- brand: The brand/manufacturer  
 - price: Price in USD (convert if needed)
 - color: Main color
 - fit: Fit type (if applicable, e.g., straight, slim, regular)
@@ -51,19 +51,10 @@ Important instructions:
 - Include products from various retailers and price points
 - Focus on products that match the user's specific criteria (price, color, fit, etc.)
 
-Return ONLY a JSON array of products in this exact format (no markdown, no code blocks, just raw JSON):
+Return ONLY a JSON array of products. No markdown, no code blocks, just the raw JSON array starting with [ and ending with ].
+Example format:
 [
-    {
-        "name": "Product Name",
-        "brand": "Brand Name",
-        "price": 45.99,
-        "color": "Black",
-        "fit": "Straight",
-        "category": "jeans",
-        "image_url": "https://...",
-        "product_url": "https://...",
-        "retailer": "Store Name"
-    }
+  {"name": "Product Name", "brand": "Brand", "price": 45.99, "color": "Black", "fit": "Straight", "category": "jeans", "image_url": "https://example.com/image.jpg", "product_url": "https://example.com/product", "retailer": "Store"}
 ]"""
 
     try:
@@ -101,7 +92,7 @@ Return ONLY a JSON array of products in this exact format (no markdown, no code 
         if json_match:
             response_text = json_match.group(0)
         
-        print("Cleaned response (first 200 chars):", response_text[:200], "...")  # Log first 200 chars
+        print("Cleaned response (first 200 chars):", response_text[:200], "...")
         
         # Parse JSON
         products = json.loads(response_text)
@@ -126,12 +117,13 @@ Return ONLY a JSON array of products in this exact format (no markdown, no code 
             product.setdefault("image_url", "https://via.placeholder.com/300x400?text=No+Image")
             product.setdefault("product_url", "#")
         
-        print(f"Successfully parsed {len(products)} products")
+        print("Successfully parsed", len(products), "products")
         return products
     
     except json.JSONDecodeError as e:
         print("JSON parsing error:", str(e))
-        print("Response text (first 500 chars):", response_text[:500] if 'response_text' in locals() else "No response")
+        if 'response_text' in locals():
+            print("Response text (first 500 chars):", response_text[:500])
         return []
     except Exception as e:
         print("Error searching with Claude:", str(e))
@@ -143,7 +135,7 @@ def root():
     return {
         "status": "online",
         "service": "AI Shopping Agent API (Web Search)",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -191,6 +183,4 @@ async def search_products(request: Request):
     except Exception as e:
         print("Search error:", str(e))
         raise HTTPException(status_code=500, detail="Search failed: " + str(e))
-
-# Run with: uvicorn main:app --reload
-# Access API docs at: http://localhost:8000/docs
+    
