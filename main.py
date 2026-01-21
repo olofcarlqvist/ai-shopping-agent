@@ -31,34 +31,22 @@ def search_products_with_claude(query: str) -> list:
     Returns a list of product dictionaries
     """
     
-    prompt = """Search the web for products that EXACTLY match: """ + '"' + query + '"' + """
+    prompt = """Find real products for: """ + '"' + query + '"' + """
 
-CRITICAL RULES:
-1. ONLY return products that MATCH the user's query (color, price, type, fit, etc.)
-2. ONLY use REAL product URLs from actual retailer websites (Amazon, Nordstrom, Levi's, H&M, ZARA, etc.)
-3. Get the ACTUAL product page URL, not a search page or category page
-4. Verify the product actually exists at that URL
-5. Response must be ONLY a JSON array. No text before or after. No explanations.
-
-Required fields for each product:
-- name: Full product name from the retailer
-- brand: Brand name
-- price: Actual current price in USD (number)
-- color: Main color
-- fit: Fit type (Straight, Slim, Skinny, Regular, Relaxed, etc.)
-- category: Product type (jeans, shoes, jacket, etc.)
-- image_url: Direct image URL from product page
-- product_url: DIRECT link to the exact product page (must be a real working URL)
+Search the web and return 6 products as a JSON array. Each product needs:
+- name: Product name
+- brand: Brand
+- price: Price in USD (number)
+- color: Color
+- fit: Fit type or "Regular"
+- category: Type (jeans, shoes, etc)
+- image_url: Image URL
+- product_url: Product page URL
 - retailer: Store name
 
-IMPORTANT: 
-- Every product_url must be a REAL, WORKING link to an actual product page
-- Do NOT make up URLs
-- Do NOT use search result URLs
-- Do NOT include products that don't match the query
+Important: Return ONLY the JSON array. No text before or after. Start with [ and end with ].
 
-Example correct response:
-[{"name":"501 Original Fit Jeans","brand":"Levi's","price":69.50,"color":"Black","fit":"Straight","category":"jeans","image_url":"https://levi.com/img.jpg","product_url":"https://www.levi.com/US/en_US/clothing/men/jeans/501-original-fit-mens-jeans/p/005010101","retailer":"Levi's"}]"""
+Example: [{"name":"Levi's 501 Jeans","brand":"Levi's","price":69.50,"color":"Black","fit":"Straight","category":"jeans","image_url":"https://example.com/img.jpg","product_url":"https://example.com/product","retailer":"Levi's"}]"""
 
     try:
         message = client.messages.create(
@@ -138,7 +126,7 @@ def root():
     return {
         "status": "online",
         "service": "AI Shopping Agent API (Web Search)",
-        "version": "2.0.1",
+        "version": "2.0.2",
         "timestamp": datetime.now().isoformat()
     }
 
