@@ -31,31 +31,25 @@ def search_products_with_claude(query: str) -> list:
     Returns a list of product dictionaries
     """
     
-    prompt = """You are a shopping assistant. Search the web for products matching this query: """ + '"' + query + '"' + """
+    prompt = """Search the web and find 6-8 products for: """ + '"' + query + '"' + """
 
-Find 6-8 real products from different retailers. For each product, extract:
-- name: The full product name
-- brand: The brand/manufacturer  
-- price: Price in USD (convert if needed)
-- color: Main color
-- fit: Fit type (if applicable, e.g., straight, slim, regular)
-- category: Product category (e.g., jeans, shoes, jacket)
-- image_url: A valid product image URL
-- product_url: Direct link to buy the product
-- retailer: Store name (e.g., "Levi's", "Amazon", "Nordstrom")
+CRITICAL: You MUST respond with ONLY a valid JSON array. No explanations, no markdown, no text before or after. Just pure JSON.
 
-Important instructions:
-- Search for real, currently available products
-- Get actual prices and product URLs
-- Ensure image URLs are valid and working
-- Include products from various retailers and price points
-- Focus on products that match the user's specific criteria (price, color, fit, etc.)
+Your response must start with [ and end with ]. Each product must have these exact fields:
+- name (string)
+- brand (string)
+- price (number, USD)
+- color (string)
+- fit (string)
+- category (string)
+- image_url (string, valid URL)
+- product_url (string, valid URL)
+- retailer (string)
 
-Return ONLY a JSON array of products. No markdown, no code blocks, just the raw JSON array starting with [ and ending with ].
-Example format:
-[
-  {"name": "Product Name", "brand": "Brand", "price": 45.99, "color": "Black", "fit": "Straight", "category": "jeans", "image_url": "https://example.com/image.jpg", "product_url": "https://example.com/product", "retailer": "Store"}
-]"""
+Do NOT say "I'll search" or "Let me find". Do NOT explain anything. ONLY output the JSON array.
+
+Correct response format:
+[{"name":"Levi's 501 Original Jeans","brand":"Levi's","price":69.50,"color":"Black","fit":"Straight","category":"jeans","image_url":"https://levi.com/image.jpg","product_url":"https://levi.com/501","retailer":"Levi's"}]"""
 
     try:
         message = client.messages.create(
