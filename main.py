@@ -101,7 +101,7 @@ Return ONLY a JSON array of products in this exact format (no markdown, no code 
         if json_match:
             response_text = json_match.group(0)
         
-        print(f"Cleaned response: {response_text[:200]}...")  # Log first 200 chars
+        print("Cleaned response (first 200 chars):", response_text[:200], "...")  # Log first 200 chars
         
         # Parse JSON
         products = json.loads(response_text)
@@ -130,11 +130,11 @@ Return ONLY a JSON array of products in this exact format (no markdown, no code 
         return products
     
     except json.JSONDecodeError as e:
-        print(f"JSON parsing error: {e}")
-        print(f"Response text: {response_text[:500]}")
+        print("JSON parsing error:", str(e))
+        print("Response text (first 500 chars):", response_text[:500] if 'response_text' in locals() else "No response")
         return []
     except Exception as e:
-        print(f"Error searching with Claude: {e}")
+        print("Error searching with Claude:", str(e))
         return []
 
 @app.get("/")
@@ -166,7 +166,7 @@ async def search_products(request: Request):
         if not query or len(query.strip()) == 0:
             raise HTTPException(status_code=400, detail="Query cannot be empty")
         
-        print(f"Searching for: {query}")
+        print("Searching for:", query)
         
         # Search for products using Claude with web search
         products = search_products_with_claude(query)
@@ -189,8 +189,8 @@ async def search_products(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON in request body")
     except Exception as e:
-        print(f"Search error: {e}")
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+        print("Search error:", str(e))
+        raise HTTPException(status_code=500, detail="Search failed: " + str(e))
 
 # Run with: uvicorn main:app --reload
 # Access API docs at: http://localhost:8000/docs
