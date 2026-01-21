@@ -31,25 +31,34 @@ def search_products_with_claude(query: str) -> list:
     Returns a list of product dictionaries
     """
     
-    prompt = """Search the web and find 6-8 products for: """ + '"' + query + '"' + """
+    prompt = """Search the web for products that EXACTLY match: """ + '"' + query + '"' + """
 
-CRITICAL: You MUST respond with ONLY a valid JSON array. No explanations, no markdown, no text before or after. Just pure JSON.
+CRITICAL RULES:
+1. ONLY return products that MATCH the user's query (color, price, type, fit, etc.)
+2. ONLY use REAL product URLs from actual retailer websites (Amazon, Nordstrom, Levi's, H&M, ZARA, etc.)
+3. Get the ACTUAL product page URL, not a search page or category page
+4. Verify the product actually exists at that URL
+5. Response must be ONLY a JSON array. No text before or after. No explanations.
 
-Your response must start with [ and end with ]. Each product must have these exact fields:
-- name (string)
-- brand (string)
-- price (number, USD)
-- color (string)
-- fit (string)
-- category (string)
-- image_url (string, valid URL)
-- product_url (string, valid URL)
-- retailer (string)
+Required fields for each product:
+- name: Full product name from the retailer
+- brand: Brand name
+- price: Actual current price in USD (number)
+- color: Main color
+- fit: Fit type (Straight, Slim, Skinny, Regular, Relaxed, etc.)
+- category: Product type (jeans, shoes, jacket, etc.)
+- image_url: Direct image URL from product page
+- product_url: DIRECT link to the exact product page (must be a real working URL)
+- retailer: Store name
 
-Do NOT say "I'll search" or "Let me find". Do NOT explain anything. ONLY output the JSON array.
+IMPORTANT: 
+- Every product_url must be a REAL, WORKING link to an actual product page
+- Do NOT make up URLs
+- Do NOT use search result URLs
+- Do NOT include products that don't match the query
 
-Correct response format:
-[{"name":"Levi's 501 Original Jeans","brand":"Levi's","price":69.50,"color":"Black","fit":"Straight","category":"jeans","image_url":"https://levi.com/image.jpg","product_url":"https://levi.com/501","retailer":"Levi's"}]"""
+Example correct response:
+[{"name":"501 Original Fit Jeans","brand":"Levi's","price":69.50,"color":"Black","fit":"Straight","category":"jeans","image_url":"https://levi.com/img.jpg","product_url":"https://www.levi.com/US/en_US/clothing/men/jeans/501-original-fit-mens-jeans/p/005010101","retailer":"Levi's"}]"""
 
     try:
         message = client.messages.create(
