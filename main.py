@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import anthropic
 import os
 import json
+import re
 from datetime import datetime
 
 app = FastAPI(title="AI Shopping Agent API")
@@ -50,9 +51,9 @@ Important instructions:
 - Include products from various retailers and price points
 - Focus on products that match the user's specific criteria (price, color, fit, etc.)
 
-Return ONLY a JSON array of products in this exact format:
+Return ONLY a JSON array of products in this exact format (no markdown, no code blocks, just raw JSON):
 [
-    {{
+    {
         "name": "Product Name",
         "brand": "Brand Name",
         "price": 45.99,
@@ -62,7 +63,7 @@ Return ONLY a JSON array of products in this exact format:
         "image_url": "https://...",
         "product_url": "https://...",
         "retailer": "Store Name"
-    }}
+    }
 ]"""
 
     try:
@@ -82,14 +83,32 @@ Return ONLY a JSON array of products in this exact format:
             if block.type == "text":
                 response_text += block.text
         
+        if not response_text.strip():
+            print("No text response from Claude")
+            return []
+        
         # Clean up the response (remove markdown code blocks if present)
-        response_text = response_text.replace("```json", "").replace("```", "").strip()
+        response_text = response_text.strip()
+        
+        # Remove markdown code blocks
+        response_text = re.sub(r'```json\s*', '', response_text)
+        response_text = re.sub(r'```\s*$', '', response_text)
+        response_text = response_text.strip()
+        
+        # Try to find JSON array in the response
+        # Look for [...] pattern
+        json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+        if json_match:
+            response_text = json_match.group(0)
+        
+        print(f"Cleaned response: {response_text[:200]}...")  # Log first 200 chars
         
         # Parse JSON
         products = json.loads(response_text)
         
         # Ensure it's a list
         if not isinstance(products, list):
+            print("Response is not a list")
             return []
         
         # Add unique IDs to products
@@ -107,8 +126,13 @@ Return ONLY a JSON array of products in this exact format:
             product.setdefault("image_url", "https://via.placeholder.com/300x400?text=No+Image")
             product.setdefault("product_url", "#")
         
+        print(f"Successfully parsed {len(products)} products")
         return products
     
+    except json.JSONDecodeError as e:
+        print(f"JSON parsing error: {e}")
+        print(f"Response text: {response_text[:500]}")
+        return []
     except Exception as e:
         print(f"Error searching with Claude: {e}")
         return []
@@ -141,6 +165,8 @@ async def search_products(request: Request):
         
         if not query or len(query.strip()) == 0:
             raise HTTPException(status_code=400, detail="Query cannot be empty")
+        
+        print(f"Searching for: {query}")
         
         # Search for products using Claude with web search
         products = search_products_with_claude(query)
