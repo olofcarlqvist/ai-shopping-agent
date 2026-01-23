@@ -15,7 +15,6 @@ from psycopg2.extras import RealDictCursor
 
 app = FastAPI(title="AI Shopping Agent API")
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,14 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Claude client
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
-# Database connection
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
-    """Create a database connection"""
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
@@ -39,11 +34,7 @@ def get_db_connection():
         print("Database connection error:", str(e))
         return None
 
-def search_database(query: str) -> list:
-    """
-    Search the PostgreSQL database for products matching the query
-    Returns a list of product dictionaries
-    """
+def search_database(query: str):
     conn = get_db_connection()
     if not conn:
         print("No database connection available")
@@ -51,52 +42,26 @@ def search_database(query: str) -> list:
     
     try:
         cursor = conn.cursor()
-        
-        # Parse query for keywords
         query_lower = query.lower()
-        
-        # Build SQL query with flexible matching
         sql = """
-            SELECT 
-                id,
-                name,
-                brand,
-                price,
-                color,
-                fit,
-                category,
-                image_url,
-                product_url,
-                affiliate_link
+            SELECT id, name, brand, price, color, fit, category, image_url, product_url, affiliate_link
             FROM products
-            WHERE 
-                LOWER(name) LIKE %s OR
-                LOWER(brand) LIKE %s OR
-                LOWER(color) LIKE %s OR
-                LOWER(category) LIKE %s OR
-                LOWER(fit) LIKE %s
+            WHERE LOWER(name) LIKE %s OR LOWER(brand) LIKE %s OR LOWER(color) LIKE %s OR LOWER(category) LIKE %s OR LOWER(fit) LIKE %s
             LIMIT 20
         """
-        
-        # Create search pattern
         search_pattern = f"%{query_lower}%"
-        
         cursor.execute(sql, (search_pattern, search_pattern, search_pattern, search_pattern, search_pattern))
         results = cursor.fetchall()
         
-        # Convert to list of dicts and map affiliate_link to retailer
         products = []
         for row in results:
             product = dict(row)
-            # Map affiliate_link to retailer for frontend compatibility
             product['retailer'] = product.get('brand', 'Online Store')
             products.append(product)
         
         print(f"Database search found {len(products)} products")
-        
         cursor.close()
         conn.close()
-        
         return products
         
     except Exception as e:
@@ -105,51 +70,110 @@ def search_database(query: str) -> list:
             conn.close()
         return []
 
-def search_products_with_claude(query: str) -> list:
-    """
-    Fallback: Use Claude with web search to find real products matching the query
-    Returns a list of product dictionaries
-    """
+def search_products_with_claude(query: str):
+    prompt = f'Find real products for: "{query}"\n\nSearch the web and return 6 products as a JSON array. Each product needs: name, brand, price (USD number), color, fit, category, image_url, product_url, retailer. Return ONLY the JSON array. Start with [ and end with ].'
     
-    prompt = """Find real products for: """ + '"' + query + '"' + """
-
-Search the web and return 6 products as a JSON array. Each product needs:
-- name: Product name
-- brand: Brand
-- price: Price in USD (number)
-- color: Color
-- fit: Fit type or "Regular"
-- category: Type (jeans, shoes, etc)
-- image_url: Image URL
-- product_url: Product page URL
-- retailer: Store name
-
-Important: Return ONLY the JSON array. No text before or after. Start with [ and end with ].
-
-Example: [{"name":"Levi's 501 Jeans","brand":"Levi's","price":69.50,"color":"Black","fit":"Straight","category":"jeans","image_url":"https://example.com/img.jpg","product_url":"https://example.com/product","retailer":"Levi's"}]"""
-
     try:
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=4096,
-            tools=[{
-                "type": "web_search_20250305",
-                "name": "web_search"
-            }],
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": prompt}]
         )
         
-        # Extract the response text from all content blocks
         response_text = ""
         for block in message.content:
             if block.type == "text":
                 response_text += block.text
         
         if not response_text.strip():
-            print("No text response from Claude")
             return []
         
-        # Clean up the response
         response_text = response_text.strip()
-        response
+        response_text = re.sub(r'```json\s*', '', response_text)
+        response_text = re.sub(r'```\s*$', '', response_text)
+        response_text = response_text.strip()
         
+        json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+        if json_match:
+            response_text = json_match.group(0)
+        
+        products = json.loads(response_text)
+        
+        if not isinstance(products, list):
+            return []
+        
+        for i, product in enumerate(products):
+            product["id"] = f"web_{i + 1}"
+            product.setdefault("name", "Unknown Product")
+            product.setdefault("brand", "Unknown")
+            product.setdefault("price", 0.0)
+            product.setdefault("color", "N/A")
+            product.setdefault("fit", "Regular")
+            product.setdefault("category", "clothing")
+            product.setdefault("retailer", "Online Store")
+            product.setdefault("image_url", "https://via.placeholder.com/300x400?text=No+Image")
+            product.setdefault("product_url", "#")
+        
+        return products
+    except Exception as e:
+        print("Error searching with Claude:", str(e))
+        return []
+
+@app.get("/")
+def root():
+    return {
+        "status": "online",
+        "service": "AI Shopping Agent API (Hybrid: Database + Web Search)",
+        "version": "3.0.1",
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.post("/api/search")
+async def search_products(request: Request):
+    try:
+        body = await request.json()
+        query = body.get("query", "")
+        
+        if not query or len(query.strip()) == 0:
+            raise HTTPException(status_code=400, detail="Query cannot be empty")
+        
+        print(f"\n{'='*50}")
+        print(f"Search Query: {query}")
+        print(f"{'='*50}")
+        print("Step 1: Searching database...")
+        
+        db_products = search_database(query)
+        
+        if db_products and len(db_products) > 0:
+            print(f"✅ Database returned {len(db_products)} products")
+            return {
+                "query": query,
+                "total_results": len(db_products),
+                "products": db_products,
+                "source": "database"
+            }
+        
+        print("⚠️ No database results. Falling back to web search...")
+        web_products = search_products_with_claude(query)
+        
+        if not web_products or len(web_products) == 0:
+            return {
+                "query": query,
+                "total_results": 0,
+                "products": [],
+                "source": "none",
+                "message": "No products found in database or web search. Try a different search."
+            }
+        
+        print(f"✅ Web search returned {len(web_products)} products")
+        return {
+            "query": query,
+            "total_results": len(web_products),
+            "products": web_products,
+            "source": "web_search"
+        }
+    except Exception as e:
+        print("Search error:", str(e))
+        raise HTTPException(status_code=500, detail="Search failed: " + str(e))
+    
