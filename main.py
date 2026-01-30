@@ -98,7 +98,7 @@ def search_database(query: str, user_id: str = None):
         sql = """
             SELECT id, name, brand, price, color, fit, category, image_url, product_url, affiliate_link
             FROM products
-            WHERE LOWER(name) LIKE %s OR LOWER(brand) LIKE %s OR LOWER(color) LIKE %s OR LOWER(category) LIKE %s OR LOWER(fit) LIKE %s
+            WHERE (LOWER(name) LIKE %s OR LOWER(brand) LIKE %s OR LOWER(color) LIKE %s OR LOWER(category) LIKE %s OR LOWER(fit) LIKE %s)
         """
         params = [f"%{query_lower}%"] * 5
         
