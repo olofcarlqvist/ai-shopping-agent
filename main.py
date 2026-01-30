@@ -1,6 +1,6 @@
 """
-AI Shopping Agent - Hybrid Backend (Database + Web Search)
-FastAPI server with PostgreSQL database primary search and Claude web search fallback
+AI Shopping Agent - Hybrid Backend (Database + Web Search + Personalization)
+FastAPI server with PostgreSQL database primary search, Claude web search fallback, and user personalization
 """
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,6 +12,7 @@ import re
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from supabase import create_client, Client
 
 app = FastAPI(title="AI Shopping Agent API")
 
@@ -26,6 +27,19 @@ app.add_middleware(
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# Supabase configuration for user preferences
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase: Client = None
+
+# Initialize Supabase client if credentials are available
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase client initialized")
+    except Exception as e:
+        print(f"⚠️ Supabase initialization failed: {e}")
+
 def get_db_connection():
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -34,7 +48,24 @@ def get_db_connection():
         print("Database connection error:", str(e))
         return None
 
-def search_database(query: str):
+def get_user_preferences(user_id: str):
+    """Fetch user preferences from Supabase"""
+    if not supabase or not user_id:
+        return None
+    
+    try:
+        response = supabase.table('user_profiles').select('*').eq('user_id', user_id).execute()
+        if response.data and len(response.data) > 0:
+            prefs = response.data[0]
+            print(f"✅ Loaded preferences for user {user_id[:8]}...")
+            return prefs
+        return None
+    except Exception as e:
+        print(f"Error fetching user preferences: {e}")
+        return None
+
+def search_database(query: str, user_id: str = None):
+    """Search database with optional personalization based on user preferences"""
     conn = get_db_connection()
     if not conn:
         print("No database connection available")
@@ -43,14 +74,79 @@ def search_database(query: str):
     try:
         cursor = conn.cursor()
         query_lower = query.lower()
+        
+        # Get user preferences if user_id is provided
+        user_prefs = None
+        if user_id:
+            user_prefs = get_user_preferences(user_id)
+        
+        # Build base SQL query
         sql = """
             SELECT id, name, brand, price, color, fit, category, image_url, product_url, affiliate_link
             FROM products
             WHERE LOWER(name) LIKE %s OR LOWER(brand) LIKE %s OR LOWER(color) LIKE %s OR LOWER(category) LIKE %s OR LOWER(fit) LIKE %s
-            LIMIT 20
         """
-        search_pattern = f"%{query_lower}%"
-        cursor.execute(sql, (search_pattern, search_pattern, search_pattern, search_pattern, search_pattern))
+        params = [f"%{query_lower}%"] * 5
+        
+        # Apply personalization filters if user preferences exist
+        if user_prefs:
+            print("🎯 Applying personalization filters...")
+            
+            # Filter by favorite brands
+            favorite_brands = user_prefs.get('favorite_brands', [])
+            if favorite_brands and len(favorite_brands) > 0:
+                brand_placeholders = ','.join(['%s'] * len(favorite_brands))
+                sql += f" AND (LOWER(REPLACE(brand, '\"', '')) IN ({brand_placeholders}) OR LOWER(brand) IN ({brand_placeholders}))"
+                # Add each brand twice (once as-is, once for the replace check)
+                brand_list = [brand.lower() for brand in favorite_brands]
+                params.extend(brand_list + brand_list)
+                print(f"   - Filtering by brands: {', '.join(favorite_brands)}")
+            
+            # Filter by fit preferences based on category
+            fit_prefs_tops = user_prefs.get('fit_preferences_tops', {})
+            fit_prefs_bottoms = user_prefs.get('fit_preferences_bottoms', {})
+            
+            # Detect if query is for tops or bottoms
+            top_keywords = ['shirt', 'top', 'hoodie', 'sweater', 'jacket', 'blouse', 'tshirt', 't-shirt', 'sweatshirt']
+            bottom_keywords = ['jean', 'trouser', 'pant', 'short', 'skirt', 'chino', 'sweatpant']
+            
+            is_top_query = any(keyword in query_lower for keyword in top_keywords)
+            is_bottom_query = any(keyword in query_lower for keyword in bottom_keywords)
+            
+            # Apply fit filters
+            if is_top_query and fit_prefs_tops:
+                # Collect all preferred fits from tops preferences
+                preferred_fits = []
+                for category_fits in fit_prefs_tops.values():
+                    if isinstance(category_fits, list):
+                        preferred_fits.extend(category_fits)
+                
+                if preferred_fits:
+                    # Remove duplicates
+                    preferred_fits = list(set(preferred_fits))
+                    fit_placeholders = ','.join(['%s'] * len(preferred_fits))
+                    sql += f" AND LOWER(fit) IN ({fit_placeholders})"
+                    params.extend([fit.lower() for fit in preferred_fits])
+                    print(f"   - Filtering by top fits: {', '.join(preferred_fits)}")
+            
+            elif is_bottom_query and fit_prefs_bottoms:
+                # Collect all preferred fits from bottoms preferences
+                preferred_fits = []
+                for category_fits in fit_prefs_bottoms.values():
+                    if isinstance(category_fits, list):
+                        preferred_fits.extend(category_fits)
+                
+                if preferred_fits:
+                    # Remove duplicates
+                    preferred_fits = list(set(preferred_fits))
+                    fit_placeholders = ','.join(['%s'] * len(preferred_fits))
+                    sql += f" AND LOWER(fit) IN ({fit_placeholders})"
+                    params.extend([fit.lower() for fit in preferred_fits])
+                    print(f"   - Filtering by bottom fits: {', '.join(preferred_fits)}")
+        
+        sql += " LIMIT 50"
+        
+        cursor.execute(sql, params)
         results = cursor.fetchall()
         
         products = []
@@ -59,7 +155,7 @@ def search_database(query: str):
             product['retailer'] = product.get('brand', 'Online Store')
             products.append(product)
         
-        print(f"Database search found {len(products)} products")
+        print(f"Database search found {len(products)} products{' (personalized)' if user_prefs else ''}")
         cursor.close()
         conn.close()
         return products
@@ -71,6 +167,7 @@ def search_database(query: str):
         return []
 
 def search_products_with_claude(query: str):
+    """Fallback web search using Claude (used when database has no results)"""
     prompt = f'Find real products for: "{query}"\n\nSearch the web and return 6 products as a JSON array. Each product needs: name, brand, price (USD number), color, fit, category, image_url, product_url, retailer. Return ONLY the JSON array. Start with [ and end with ].'
     
     try:
@@ -124,9 +221,10 @@ def search_products_with_claude(query: str):
 def root():
     return {
         "status": "online",
-        "service": "AI Shopping Agent API (Hybrid: Database + Web Search)",
-        "version": "3.0.1",
-        "timestamp": datetime.now().isoformat()
+        "service": "AI Shopping Agent API (Hybrid: Database + Web Search + Personalization)",
+        "version": "4.0.0",
+        "timestamp": datetime.now().isoformat(),
+        "features": ["database_search", "web_search_fallback", "user_personalization"]
     }
 
 @app.post("/api/search")
@@ -134,16 +232,20 @@ async def search_products(request: Request):
     try:
         body = await request.json()
         query = body.get("query", "")
+        user_id = body.get("user_id")  # Optional user ID for personalization
         
         if not query or len(query.strip()) == 0:
             raise HTTPException(status_code=400, detail="Query cannot be empty")
         
         print(f"\n{'='*50}")
         print(f"Search Query: {query}")
+        if user_id:
+            print(f"User ID: {user_id[:8]}... (personalized search)")
         print(f"{'='*50}")
         print("Step 1: Searching database...")
         
-        db_products = search_database(query)
+        # Search database with optional personalization
+        db_products = search_database(query, user_id)
         
         if db_products and len(db_products) > 0:
             print(f"✅ Database returned {len(db_products)} products")
@@ -151,7 +253,8 @@ async def search_products(request: Request):
                 "query": query,
                 "total_results": len(db_products),
                 "products": db_products,
-                "source": "database"
+                "source": "database",
+                "personalized": user_id is not None and supabase is not None
             }
         
         print("⚠️ No database results. Falling back to web search...")
@@ -163,6 +266,7 @@ async def search_products(request: Request):
                 "total_results": 0,
                 "products": [],
                 "source": "none",
+                "personalized": False,
                 "message": "No products found in database or web search. Try a different search."
             }
         
@@ -171,7 +275,8 @@ async def search_products(request: Request):
             "query": query,
             "total_results": len(web_products),
             "products": web_products,
-            "source": "web_search"
+            "source": "web_search",
+            "personalized": False
         }
     except Exception as e:
         print("Search error:", str(e))
