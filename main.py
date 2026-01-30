@@ -160,6 +160,9 @@ def search_database(query: str, user_id: str = None):
         
         sql += " LIMIT 50"
         
+        print(f"🔍 Final SQL: {sql}")
+        print(f"🔍 SQL Params: {params}")
+        
         cursor.execute(sql, params)
         results = cursor.fetchall()
         
