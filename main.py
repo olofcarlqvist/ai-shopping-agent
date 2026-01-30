@@ -50,18 +50,32 @@ def get_db_connection():
 
 def get_user_preferences(user_id: str):
     """Fetch user preferences from Supabase"""
-    if not supabase or not user_id:
+    if not supabase:
+        print("❌ Supabase client is None!")
+        return None
+    
+    if not user_id:
+        print("❌ No user_id provided!")
         return None
     
     try:
+        print(f"🔍 Fetching preferences for user: {user_id}")
         response = supabase.table('user_profiles').select('*').eq('user_id', user_id).execute()
+        print(f"📊 Supabase response: {response}")
+        print(f"📊 Response data: {response.data}")
+        
         if response.data and len(response.data) > 0:
             prefs = response.data[0]
             print(f"✅ Loaded preferences for user {user_id[:8]}...")
+            print(f"✅ Favorite brands: {prefs.get('favorite_brands', [])}")
             return prefs
+        else:
+            print(f"⚠️ No data found for user {user_id}")
         return None
     except Exception as e:
-        print(f"Error fetching user preferences: {e}")
+        print(f"❌ Error fetching user preferences: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def search_database(query: str, user_id: str = None):
