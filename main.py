@@ -306,4 +306,37 @@ async def search_products(request: Request):
     except Exception as e:
         print("Search error:", str(e))
         raise HTTPException(status_code=500, detail="Search failed: " + str(e))
+
+@app.post("/api/track")
+async def track_interaction(request: Request):
+    """
+    Track user interactions with products (clicks, favorites, views)
+    This data is used to learn user preferences and improve recommendations
+    """
+    try:
+        body = await request.json()
+        user_id = body.get("user_id")
+        product_id = body.get("product_id")
+        action = body.get("action")  # 'clicked', 'favorited', 'viewed'
+        
+        if not user_id or not product_id or not action:
+            raise HTTPException(status_code=400, detail="user_id, product_id, and action are required")
+        
+        if not supabase:
+            print("⚠️ Supabase not initialized, cannot track interaction")
+            return {"success": False, "message": "Tracking not available"}
+        
+        # Save interaction to Supabase
+        supabase.table('user_interactions').insert({
+            'user_id': user_id,
+            'product_id': str(product_id),
+            'action': action
+        }).execute()
+        
+        print(f"✅ Tracked: User {user_id[:8]}... {action} product {product_id}")
+        return {"success": True}
+        
+    except Exception as e:
+        print(f"Error tracking interaction: {e}")
+        raise HTTPException(status_code=500, detail="Tracking failed: " + str(e))
     
