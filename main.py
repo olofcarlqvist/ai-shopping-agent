@@ -116,6 +116,14 @@ def search_database(query: str, user_id: str = None):
                 params.extend(brand_list + brand_list)
                 print(f"   - Filtering by brands: {', '.join(favorite_brands)}")
             
+            # Filter by favorite styles
+            favorite_styles = user_prefs.get('favorite_styles', [])
+            if favorite_styles and len(favorite_styles) > 0:
+                style_placeholders = ','.join(['%s'] * len(favorite_styles))
+                sql += f" AND LOWER(style) IN ({style_placeholders})"
+                params.extend([style.lower() for style in favorite_styles])
+                print(f"   - Filtering by styles: {', '.join(favorite_styles)}")
+            
             # Filter by fit preferences based on category
             fit_prefs_tops = user_prefs.get('fit_preferences_tops', {})
             fit_prefs_bottoms = user_prefs.get('fit_preferences_bottoms', {})
