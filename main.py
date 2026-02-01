@@ -111,8 +111,15 @@ def get_user_click_history(user_id: str, limit: int = 10):
         print(f"❌ Error fetching click history: {e}")
         return []
 
-def get_similar_products(product_ids: list, user_prefs: dict = None, limit: int = 8):
-    """Find products similar to clicked products based on brand, style, category"""
+def get_similar_products(product_ids: list, user_prefs: dict = None, limit: int = 8, category_filter: str = None):
+    """Find products similar to clicked products based on brand, style, category
+    
+    Args:
+        product_ids: List of product IDs the user has clicked
+        user_prefs: User preferences for additional filtering
+        limit: Maximum number of recommendations to return
+        category_filter: Optional category to restrict recommendations (e.g., 'jeans', 'tops')
+    """
     if not product_ids:
         return []
     
@@ -194,6 +201,12 @@ def get_similar_products(product_ids: list, user_prefs: dict = None, limit: int 
         
         if conditions:
             sql += " AND (" + " OR ".join(conditions) + ")"
+        
+        # Apply category filter if provided (for search-specific recommendations)
+        if category_filter:
+            sql += " AND LOWER(category) = %s"
+            params.append(category_filter.lower())
+            print(f"   - Filtering recommendations by category: {category_filter}")
         
         # Apply user preference filters if available
         if user_prefs:
@@ -491,10 +504,15 @@ async def track_interaction(request: Request):
         raise HTTPException(status_code=500, detail="Tracking failed: " + str(e))
 
 @app.get("/api/recommendations/{user_id}")
-async def get_recommendations(user_id: str, limit: int = 8):
+async def get_recommendations(user_id: str, limit: int = 8, category: str = None):
     """
     Get personalized product recommendations based on user's click history
     Returns products similar to what the user has clicked on
+    
+    Args:
+        user_id: User ID to get recommendations for
+        limit: Maximum number of recommendations (default: 8)
+        category: Optional category filter (e.g., 'jeans', 'tops') to restrict recommendations
     """
     try:
         if not user_id:
@@ -502,6 +520,8 @@ async def get_recommendations(user_id: str, limit: int = 8):
         
         print(f"\n{'='*50}")
         print(f"🎯 Getting recommendations for user: {user_id[:8]}...")
+        if category:
+            print(f"   Category filter: {category}")
         print(f"{'='*50}")
         
         # Get user preferences for additional filtering
@@ -538,6 +558,11 @@ async def get_recommendations(user_id: str, limit: int = 8):
                             sql += f" AND LOWER(style) IN ({style_placeholders})"
                             params.extend([s.lower() for s in favorite_styles])
                         
+                        # Apply category filter if provided
+                        if category:
+                            sql += " AND LOWER(category) = %s"
+                            params.append(category.lower())
+                        
                         sql += f" ORDER BY RANDOM() LIMIT {limit}"
                         
                         cursor.execute(sql, params)
@@ -559,7 +584,8 @@ async def get_recommendations(user_id: str, limit: int = 8):
                             "user_id": user_id,
                             "total_recommendations": len(recommendations),
                             "recommendations": recommendations,
-                            "source": "style_based"
+                            "source": "style_based",
+                            "category_filter": category
                         }
                     except Exception as e:
                         print(f"❌ Error getting style-based recommendations: {e}")
@@ -574,15 +600,16 @@ async def get_recommendations(user_id: str, limit: int = 8):
                 "message": "No recommendations available yet. Browse and click on products to get personalized recommendations!"
             }
         
-        # Get similar products based on click history
-        recommendations = get_similar_products(clicked_product_ids, user_prefs, limit)
+        # Get similar products based on click history (with optional category filter)
+        recommendations = get_similar_products(clicked_product_ids, user_prefs, limit, category_filter=category)
         
         return {
             "user_id": user_id,
             "total_recommendations": len(recommendations),
             "recommendations": recommendations,
             "source": "click_based",
-            "based_on_clicks": len(clicked_product_ids)
+            "based_on_clicks": len(clicked_product_ids),
+            "category_filter": category
         }
         
     except Exception as e:
