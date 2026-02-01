@@ -29,8 +29,10 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # Supabase configuration for user preferences
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")  # anon key for reading
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")  # service role for writing
 supabase: Client = None
+supabase_admin: Client = None  # Admin client for tracking (bypasses RLS)
 
 # Initialize Supabase client if credentials are available
 if SUPABASE_URL and SUPABASE_KEY:
@@ -39,6 +41,14 @@ if SUPABASE_URL and SUPABASE_KEY:
         print("✅ Supabase client initialized")
     except Exception as e:
         print(f"⚠️ Supabase initialization failed: {e}")
+
+# Initialize admin client with service role key for tracking
+if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+    try:
+        supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        print("✅ Supabase admin client initialized (for tracking)")
+    except Exception as e:
+        print(f"⚠️ Supabase admin initialization failed: {e}")
 
 def get_db_connection():
     try:
@@ -322,12 +332,12 @@ async def track_interaction(request: Request):
         if not user_id or not product_id or not action:
             raise HTTPException(status_code=400, detail="user_id, product_id, and action are required")
         
-        if not supabase:
-            print("⚠️ Supabase not initialized, cannot track interaction")
+        if not supabase_admin:
+            print("⚠️ Supabase admin not initialized, cannot track interaction")
             return {"success": False, "message": "Tracking not available"}
         
-        # Save interaction to Supabase
-        supabase.table('user_interactions').insert({
+        # Save interaction to Supabase using admin client (bypasses RLS)
+        supabase_admin.table('user_interactions').insert({
             'user_id': user_id,
             'product_id': str(product_id),
             'action': action
