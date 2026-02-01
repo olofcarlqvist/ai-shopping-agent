@@ -88,6 +88,146 @@ def get_user_preferences(user_id: str):
         traceback.print_exc()
         return None
 
+def get_user_click_history(user_id: str, limit: int = 10):
+    """Get products the user has clicked on from user_interactions"""
+    if not supabase_admin:
+        return []
+    
+    try:
+        # Get recent clicked products
+        response = supabase_admin.table('user_interactions')\
+            .select('product_id')\
+            .eq('user_id', user_id)\
+            .eq('action', 'clicked')\
+            .order('created_at', desc=True)\
+            .limit(limit)\
+            .execute()
+        
+        if response.data:
+            product_ids = [item['product_id'] for item in response.data]
+            return product_ids
+        return []
+    except Exception as e:
+        print(f"❌ Error fetching click history: {e}")
+        return []
+
+def get_similar_products(product_ids: list, user_prefs: dict = None, limit: int = 8):
+    """Find products similar to clicked products based on brand, style, category"""
+    if not product_ids:
+        return []
+    
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Convert product_ids to integers (filter out 'web_' prefixed IDs)
+        db_product_ids = []
+        for pid in product_ids:
+            try:
+                if not str(pid).startswith('web_'):
+                    db_product_ids.append(int(pid))
+            except (ValueError, TypeError):
+                continue
+        
+        if not db_product_ids:
+            cursor.close()
+            conn.close()
+            return []
+        
+        # Get the clicked products to find similar ones
+        placeholders = ','.join(['%s'] * len(db_product_ids))
+        cursor.execute(f"""
+            SELECT brand, style, category 
+            FROM products 
+            WHERE id IN ({placeholders})
+        """, db_product_ids)
+        
+        clicked_products = cursor.fetchall()
+        
+        if not clicked_products:
+            cursor.close()
+            conn.close()
+            return []
+        
+        # Extract unique brands, styles, categories
+        brands = set()
+        styles = set()
+        categories = set()
+        
+        for product in clicked_products:
+            if product['brand']:
+                brands.add(product['brand'].lower().replace('"', ''))
+            if product['style']:
+                styles.add(product['style'].lower())
+            if product['category']:
+                categories.add(product['category'].lower())
+        
+        # Build SQL to find similar products (excluding already clicked ones)
+        sql = """
+            SELECT id, name, brand, price, color, fit, category, style, image_url, product_url, affiliate_link
+            FROM products
+            WHERE id NOT IN ({})
+        """.format(placeholders)
+        
+        params = db_product_ids.copy()
+        
+        # Match by brand, style, or category
+        conditions = []
+        
+        if brands:
+            brand_placeholders = ','.join(['%s'] * len(brands))
+            conditions.append(f"(LOWER(REPLACE(brand, '\"', '')) IN ({brand_placeholders}))")
+            params.extend(list(brands))
+        
+        if styles:
+            style_placeholders = ','.join(['%s'] * len(styles))
+            conditions.append(f"(LOWER(style) IN ({style_placeholders}))")
+            params.extend(list(styles))
+        
+        if categories:
+            category_placeholders = ','.join(['%s'] * len(categories))
+            conditions.append(f"(LOWER(category) IN ({category_placeholders}))")
+            params.extend(list(categories))
+        
+        if conditions:
+            sql += " AND (" + " OR ".join(conditions) + ")"
+        
+        # Apply user preference filters if available
+        if user_prefs:
+            favorite_brands = user_prefs.get('favorite_brands', [])
+            if favorite_brands:
+                brand_filter_placeholders = ','.join(['%s'] * len(favorite_brands))
+                sql += f" AND (LOWER(REPLACE(brand, '\"', '')) IN ({brand_filter_placeholders}) OR LOWER(brand) IN ({brand_filter_placeholders}))"
+                brand_list = [b.lower() for b in favorite_brands]
+                params.extend(brand_list + brand_list)
+        
+        sql += f" LIMIT {limit}"
+        
+        cursor.execute(sql, params)
+        results = cursor.fetchall()
+        
+        recommendations = []
+        for row in results:
+            product = dict(row)
+            product['retailer'] = product.get('brand', 'Online Store')
+            product['recommended_reason'] = 'Similar to what you viewed'
+            recommendations.append(product)
+        
+        cursor.close()
+        conn.close()
+        
+        print(f"💡 Found {len(recommendations)} recommendations based on click history")
+        return recommendations
+        
+    except Exception as e:
+        print(f"❌ Error getting similar products: {e}")
+        if conn:
+            conn.close()
+        return []
+
 def search_database(query: str, user_id: str = None):
     """Search database with optional personalization based on user preferences"""
     conn = get_db_connection()
@@ -349,4 +489,103 @@ async def track_interaction(request: Request):
     except Exception as e:
         print(f"Error tracking interaction: {e}")
         raise HTTPException(status_code=500, detail="Tracking failed: " + str(e))
-    
+
+@app.get("/api/recommendations/{user_id}")
+async def get_recommendations(user_id: str, limit: int = 8):
+    """
+    Get personalized product recommendations based on user's click history
+    Returns products similar to what the user has clicked on
+    """
+    try:
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+        
+        print(f"\n{'='*50}")
+        print(f"🎯 Getting recommendations for user: {user_id[:8]}...")
+        print(f"{'='*50}")
+        
+        # Get user preferences for additional filtering
+        user_prefs = get_user_preferences(user_id)
+        
+        # Get user's click history
+        clicked_product_ids = get_user_click_history(user_id, limit=10)
+        
+        if not clicked_product_ids:
+            print("ℹ️ No click history found - returning style-based recommendations")
+            
+            # If no click history, recommend based on user preferences only
+            if user_prefs:
+                conn = get_db_connection()
+                if conn:
+                    try:
+                        cursor = conn.cursor()
+                        
+                        sql = "SELECT id, name, brand, price, color, fit, category, style, image_url, product_url, affiliate_link FROM products WHERE 1=1"
+                        params = []
+                        
+                        # Filter by favorite brands
+                        favorite_brands = user_prefs.get('favorite_brands', [])
+                        if favorite_brands:
+                            brand_placeholders = ','.join(['%s'] * len(favorite_brands))
+                            sql += f" AND (LOWER(REPLACE(brand, '\"', '')) IN ({brand_placeholders}) OR LOWER(brand) IN ({brand_placeholders}))"
+                            brand_list = [b.lower() for b in favorite_brands]
+                            params.extend(brand_list + brand_list)
+                        
+                        # Filter by favorite styles
+                        favorite_styles = user_prefs.get('favorite_styles', [])
+                        if favorite_styles:
+                            style_placeholders = ','.join(['%s'] * len(favorite_styles))
+                            sql += f" AND LOWER(style) IN ({style_placeholders})"
+                            params.extend([s.lower() for s in favorite_styles])
+                        
+                        sql += f" ORDER BY RANDOM() LIMIT {limit}"
+                        
+                        cursor.execute(sql, params)
+                        results = cursor.fetchall()
+                        
+                        recommendations = []
+                        for row in results:
+                            product = dict(row)
+                            product['retailer'] = product.get('brand', 'Online Store')
+                            product['recommended_reason'] = 'Matches your style'
+                            recommendations.append(product)
+                        
+                        cursor.close()
+                        conn.close()
+                        
+                        print(f"💡 Found {len(recommendations)} style-based recommendations")
+                        
+                        return {
+                            "user_id": user_id,
+                            "total_recommendations": len(recommendations),
+                            "recommendations": recommendations,
+                            "source": "style_based"
+                        }
+                    except Exception as e:
+                        print(f"❌ Error getting style-based recommendations: {e}")
+                        if conn:
+                            conn.close()
+            
+            return {
+                "user_id": user_id,
+                "total_recommendations": 0,
+                "recommendations": [],
+                "source": "none",
+                "message": "No recommendations available yet. Browse and click on products to get personalized recommendations!"
+            }
+        
+        # Get similar products based on click history
+        recommendations = get_similar_products(clicked_product_ids, user_prefs, limit)
+        
+        return {
+            "user_id": user_id,
+            "total_recommendations": len(recommendations),
+            "recommendations": recommendations,
+            "source": "click_based",
+            "based_on_clicks": len(clicked_product_ids)
+        }
+        
+    except Exception as e:
+        print(f"Error getting recommendations: {e}")
+        raise HTTPException(status_code=500, detail="Recommendation failed: " + str(e))
+        
