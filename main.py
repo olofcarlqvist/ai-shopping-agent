@@ -948,4 +948,116 @@ async def get_recent_searches(user_id: str, limit: int = 5):
     except Exception as e:
         print(f"Error getting recent searches: {e}")
         raise HTTPException(status_code=500, detail="Failed to get recent searches: " + str(e))
+
+@app.get("/api/viewed/{user_id}")
+async def get_recently_viewed(user_id: str, limit: int = 8):
+    """
+    Get user's recently viewed products
+    Returns the last N products the user viewed (hovered over for 1+ second)
+    """
+    try:
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+        
+        print(f"\n{'='*50}")
+        print(f"👀 Fetching recently viewed for user: {user_id[:8]}...")
+        print(f"{'='*50}")
+        
+        if not supabase_admin:
+            print("⚠️ Supabase admin not initialized")
+            return {"user_id": user_id, "products": []}
+        
+        # Query user_interactions for recent views
+        response = supabase_admin.table('user_interactions')\
+            .select('product_id, created_at')\
+            .eq('user_id', user_id)\
+            .eq('action', 'viewed')\
+            .order('created_at', desc=True)\
+            .limit(limit * 2)\
+            .execute()
+        
+        if not response.data:
+            print("ℹ️ No view history found")
+            return {"user_id": user_id, "products": []}
+        
+        # Extract unique product IDs (preserve order, most recent first)
+        seen_products = set()
+        unique_product_ids = []
+        
+        for item in response.data:
+            product_id = item.get('product_id')
+            if product_id and product_id not in seen_products:
+                # Skip web_ prefixed IDs (from web search results)
+                if not str(product_id).startswith('web_'):
+                    seen_products.add(product_id)
+                    unique_product_ids.append(product_id)
+                    
+                    if len(unique_product_ids) >= limit:
+                        break
+        
+        if not unique_product_ids:
+            print("ℹ️ No valid product IDs found")
+            return {"user_id": user_id, "products": []}
+        
+        # Fetch actual product details from database
+        conn = get_db_connection()
+        if not conn:
+            return {"user_id": user_id, "products": []}
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Convert to integers
+            product_ids = []
+            for pid in unique_product_ids:
+                try:
+                    product_ids.append(int(pid))
+                except (ValueError, TypeError):
+                    continue
+            
+            if not product_ids:
+                cursor.close()
+                conn.close()
+                return {"user_id": user_id, "products": []}
+            
+            placeholders = ','.join(['%s'] * len(product_ids))
+            sql = f"""
+                SELECT id, name, brand, price, color, fit, category, style, image_url, product_url, affiliate_link
+                FROM products
+                WHERE id IN ({placeholders})
+            """
+            
+            cursor.execute(sql, product_ids)
+            results = cursor.fetchall()
+            
+            # Preserve the order from user_interactions (most recent first)
+            products_dict = {row['id']: dict(row) for row in results}
+            ordered_products = []
+            
+            for pid in product_ids:
+                if pid in products_dict:
+                    product = products_dict[pid]
+                    product['retailer'] = product.get('brand', 'Online Store')
+                    ordered_products.append(product)
+            
+            cursor.close()
+            conn.close()
+            
+            print(f"✅ Found {len(ordered_products)} recently viewed products")
+            
+            return {
+                "user_id": user_id,
+                "total_viewed": len(ordered_products),
+                "products": ordered_products
+            }
+            
+        except Exception as e:
+            print(f"❌ Error fetching product details: {e}")
+            if conn:
+                conn.close()
+            return {"user_id": user_id, "products": []}
+        
+    except Exception as e:
+        print(f"Error getting recently viewed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get recently viewed: " + str(e))
         
