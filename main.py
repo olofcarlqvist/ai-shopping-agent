@@ -473,30 +473,48 @@ async def search_products(request: Request):
 @app.post("/api/track")
 async def track_interaction(request: Request):
     """
-    Track user interactions with products (clicks, favorites, views)
+    Track user interactions (clicks, favorites, views, searches)
     This data is used to learn user preferences and improve recommendations
     """
     try:
         body = await request.json()
         user_id = body.get("user_id")
-        product_id = body.get("product_id")
-        action = body.get("action")  # 'clicked', 'favorited', 'viewed'
+        product_id = body.get("product_id")  # Optional for search tracking
+        action = body.get("action")  # 'clicked', 'favorited', 'viewed', 'searched'
+        metadata = body.get("metadata")  # Optional: for storing search queries, etc.
         
-        if not user_id or not product_id or not action:
-            raise HTTPException(status_code=400, detail="user_id, product_id, and action are required")
+        if not user_id or not action:
+            raise HTTPException(status_code=400, detail="user_id and action are required")
         
         if not supabase_admin:
             print("⚠️ Supabase admin not initialized, cannot track interaction")
             return {"success": False, "message": "Tracking not available"}
         
-        # Save interaction to Supabase using admin client (bypasses RLS)
-        supabase_admin.table('user_interactions').insert({
+        # Build interaction data
+        interaction_data = {
             'user_id': user_id,
-            'product_id': str(product_id),
             'action': action
-        }).execute()
+        }
         
-        print(f"✅ Tracked: User {user_id[:8]}... {action} product {product_id}")
+        # Add product_id if provided (for clicks, favorites, views)
+        if product_id:
+            interaction_data['product_id'] = str(product_id)
+        
+        # Add metadata if provided (for search queries, etc.)
+        if metadata:
+            interaction_data['metadata'] = metadata
+        
+        # Save interaction to Supabase using admin client (bypasses RLS)
+        supabase_admin.table('user_interactions').insert(interaction_data).execute()
+        
+        # Log with appropriate message
+        if action == 'searched' and metadata:
+            print(f"✅ Tracked: User {user_id[:8]}... searched for '{metadata.get('query', 'unknown')}'")
+        elif product_id:
+            print(f"✅ Tracked: User {user_id[:8]}... {action} product {product_id}")
+        else:
+            print(f"✅ Tracked: User {user_id[:8]}... {action}")
+        
         return {"success": True}
         
     except Exception as e:
