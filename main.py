@@ -1060,4 +1060,61 @@ async def get_recently_viewed(user_id: str, limit: int = 8):
     except Exception as e:
         print(f"Error getting recently viewed: {e}")
         raise HTTPException(status_code=500, detail="Failed to get recently viewed: " + str(e))
+
+@app.get("/api/product/{product_id}")
+async def get_product(product_id: int):
+    """
+    Get a single product by ID
+    """
+    try:
+        print(f"\n{'='*50}")
+        print(f"📦 Fetching product ID: {product_id}")
+        print(f"{'='*50}")
+        
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            cursor = conn.cursor()
+            
+            sql = """
+                SELECT id, name, brand, price, color, fit, category, style, image_url, product_url, affiliate_link
+                FROM products
+                WHERE id = %s
+            """
+            
+            cursor.execute(sql, [product_id])
+            result = cursor.fetchone()
+            
+            if result:
+                product = dict(result)
+                product['retailer'] = product.get('brand', 'Online Store')
+                
+                cursor.close()
+                conn.close()
+                
+                print(f"✅ Found product: {product['name']}")
+                
+                return {
+                    "product": product
+                }
+            else:
+                cursor.close()
+                conn.close()
+                
+                print(f"❌ Product {product_id} not found")
+                raise HTTPException(status_code=404, detail="Product not found")
+                
+        except Exception as e:
+            print(f"❌ Database error: {e}")
+            if conn:
+                conn.close()
+            raise HTTPException(status_code=500, detail="Database query failed")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting product: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get product: " + str(e))
         
