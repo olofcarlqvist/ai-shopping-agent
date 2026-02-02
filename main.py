@@ -88,161 +88,203 @@ def get_user_preferences(user_id: str):
         traceback.print_exc()
         return None
 
-def get_user_click_history(user_id: str, limit: int = 10):
-    """Get products the user has clicked on from user_interactions"""
-    if not supabase_admin:
-        return []
-    
-    try:
-        # Get recent clicked products
-        response = supabase_admin.table('user_interactions')\
-            .select('product_id')\
-            .eq('user_id', user_id)\
-            .eq('action', 'clicked')\
-            .order('created_at', desc=True)\
-            .limit(limit)\
-            .execute()
-        
-        if response.data:
-            product_ids = [item['product_id'] for item in response.data]
-            return product_ids
-        return []
-    except Exception as e:
-        print(f"❌ Error fetching click history: {e}")
-        return []
-
-def get_similar_products(product_ids: list, user_prefs: dict = None, limit: int = 8, category_filter: str = None):
-    """Find products similar to clicked products based on brand, style, category
-    
-    Args:
-        product_ids: List of product IDs the user has clicked
-        user_prefs: User preferences for additional filtering
-        limit: Maximum number of recommendations to return
-        category_filter: Optional category to restrict recommendations (e.g., 'jeans', 'tops')
+def parse_search_query(query: str):
     """
-    if not product_ids:
-        return []
+    Parse natural language search query to extract parameters:
+    - category (clothing type)
+    - style
+    - color
+    - price (max_price, price_range)
+    - occasion
+    - brand
+    - fit
+    - material
+    """
+    query_lower = query.lower()
+    params = {}
     
-    conn = get_db_connection()
-    if not conn:
-        return []
+    # CATEGORIES - Comprehensive clothing types
+    categories = {
+        # Tops
+        'shirt': ['shirt', 'shirts'], 
+        't-shirt': ['t-shirt', 'tshirt', 'tee', 'tees', 't shirt'],
+        'blouse': ['blouse', 'blouses'],
+        'tank top': ['tank top', 'tank', 'tanks'],
+        'crop top': ['crop top', 'crop'],
+        'sweater': ['sweater', 'sweaters'],
+        'cardigan': ['cardigan', 'cardigans'],
+        'hoodie': ['hoodie', 'hoodies', 'hood'],
+        'sweatshirt': ['sweatshirt', 'sweatshirts'],
+        'jacket': ['jacket', 'jackets'],
+        'blazer': ['blazer', 'blazers'],
+        'coat': ['coat', 'coats'],
+        'vest': ['vest', 'vests'],
+        
+        # Bottoms
+        'jeans': ['jeans', 'jean', 'denim pants'],
+        'pants': ['pants', 'pant', 'trousers', 'trouser'],
+        'chinos': ['chinos', 'chino'],
+        'shorts': ['shorts', 'short'],
+        'skirt': ['skirt', 'skirts'],
+        'leggings': ['leggings', 'legging'],
+        'joggers': ['joggers', 'jogger'],
+        'sweatpants': ['sweatpants', 'sweatpant', 'sweats'],
+        'cargo pants': ['cargo pants', 'cargo'],
+        
+        # Dresses
+        'dress': ['dress', 'dresses', 'gown', 'sundress', 'maxi dress', 'mini dress'],
+        
+        # Shoes
+        'shoes': ['shoes', 'shoe'],
+        'sneakers': ['sneakers', 'sneaker', 'trainers', 'trainer'],
+        'boots': ['boots', 'boot'],
+        'sandals': ['sandals', 'sandal'],
+        'heels': ['heels', 'heel', 'high heels'],
+        'flats': ['flats', 'flat'],
+        'loafers': ['loafers', 'loafer'],
+        
+        # Accessories
+        'bag': ['bag', 'bags', 'backpack', 'purse', 'handbag'],
+        'hat': ['hat', 'hats', 'cap', 'caps', 'beanie'],
+        'scarf': ['scarf', 'scarves'],
+        'belt': ['belt', 'belts'],
+        'sunglasses': ['sunglasses', 'sunglass', 'shades'],
+        'watch': ['watch', 'watches'],
+        
+        # Activewear
+        'activewear': ['activewear', 'gym wear', 'sportswear', 'athletic wear', 'workout clothes', 'running gear', 'yoga pants']
+    }
     
-    try:
-        cursor = conn.cursor()
-        
-        # Convert product_ids to integers (filter out 'web_' prefixed IDs)
-        db_product_ids = []
-        for pid in product_ids:
-            try:
-                if not str(pid).startswith('web_'):
-                    db_product_ids.append(int(pid))
-            except (ValueError, TypeError):
-                continue
-        
-        if not db_product_ids:
-            cursor.close()
-            conn.close()
-            return []
-        
-        # Get the clicked products to find similar ones
-        placeholders = ','.join(['%s'] * len(db_product_ids))
-        cursor.execute(f"""
-            SELECT brand, style, category 
-            FROM products 
-            WHERE id IN ({placeholders})
-        """, db_product_ids)
-        
-        clicked_products = cursor.fetchall()
-        
-        if not clicked_products:
-            cursor.close()
-            conn.close()
-            return []
-        
-        # Extract unique brands, styles, categories
-        brands = set()
-        styles = set()
-        categories = set()
-        
-        for product in clicked_products:
-            if product['brand']:
-                brands.add(product['brand'].lower().replace('"', ''))
-            if product['style']:
-                styles.add(product['style'].lower())
-            if product['category']:
-                categories.add(product['category'].lower())
-        
-        # Build SQL to find similar products (excluding already clicked ones)
-        sql = """
-            SELECT id, name, brand, price, color, fit, category, style, image_url, product_url, affiliate_link
-            FROM products
-            WHERE id NOT IN ({})
-        """.format(placeholders)
-        
-        params = db_product_ids.copy()
-        
-        # Match by brand, style, or category
-        conditions = []
-        
-        if brands:
-            brand_placeholders = ','.join(['%s'] * len(brands))
-            conditions.append(f"(LOWER(REPLACE(brand, '\"', '')) IN ({brand_placeholders}))")
-            params.extend(list(brands))
-        
-        if styles:
-            style_placeholders = ','.join(['%s'] * len(styles))
-            conditions.append(f"(LOWER(style) IN ({style_placeholders}))")
-            params.extend(list(styles))
-        
-        if categories:
-            category_placeholders = ','.join(['%s'] * len(categories))
-            conditions.append(f"(LOWER(category) IN ({category_placeholders}))")
-            params.extend(list(categories))
-        
-        if conditions:
-            sql += " AND (" + " OR ".join(conditions) + ")"
-        
-        # Apply category filter if provided (for search-specific recommendations)
-        if category_filter:
-            sql += " AND LOWER(category) = %s"
-            params.append(category_filter.lower())
-            print(f"   - Filtering recommendations by category: {category_filter}")
-        
-        # Apply user preference filters if available
-        if user_prefs:
-            favorite_brands = user_prefs.get('favorite_brands', [])
-            if favorite_brands:
-                brand_filter_placeholders = ','.join(['%s'] * len(favorite_brands))
-                sql += f" AND (LOWER(REPLACE(brand, '\"', '')) IN ({brand_filter_placeholders}) OR LOWER(brand) IN ({brand_filter_placeholders}))"
-                brand_list = [b.lower() for b in favorite_brands]
-                params.extend(brand_list + brand_list)
-        
-        sql += f" LIMIT {limit}"
-        
-        cursor.execute(sql, params)
-        results = cursor.fetchall()
-        
-        recommendations = []
-        for row in results:
-            product = dict(row)
-            product['retailer'] = product.get('brand', 'Online Store')
-            product['recommended_reason'] = 'Similar to what you viewed'
-            recommendations.append(product)
-        
-        cursor.close()
-        conn.close()
-        
-        print(f"💡 Found {len(recommendations)} recommendations based on click history")
-        return recommendations
-        
-    except Exception as e:
-        print(f"❌ Error getting similar products: {e}")
-        if conn:
-            conn.close()
-        return []
+    for category, keywords in categories.items():
+        if any(keyword in query_lower for keyword in keywords):
+            params['category'] = category
+            break
+    
+    # COLORS - Comprehensive color list
+    colors = {
+        'black': ['black'],
+        'white': ['white', 'ivory', 'cream'],
+        'gray': ['gray', 'grey'],
+        'brown': ['brown', 'tan', 'beige', 'khaki'],
+        'blue': ['blue', 'navy', 'light blue', 'dark blue', 'royal blue', 'sky blue'],
+        'teal': ['teal', 'turquoise', 'aqua', 'cyan'],
+        'red': ['red', 'burgundy', 'maroon', 'wine', 'crimson', 'scarlet'],
+        'pink': ['pink', 'hot pink', 'blush', 'rose'],
+        'coral': ['coral'],
+        'green': ['green', 'olive', 'forest green', 'lime', 'mint', 'sage', 'emerald'],
+        'yellow': ['yellow', 'gold', 'mustard', 'lemon'],
+        'orange': ['orange', 'rust', 'terracotta', 'peach', 'apricot'],
+        'purple': ['purple', 'lavender', 'violet', 'plum', 'lilac', 'magenta']
+    }
+    
+    for color, keywords in colors.items():
+        if any(keyword in query_lower for keyword in keywords):
+            params['color'] = color
+            break
+    
+    # STYLES - Comprehensive style list
+    styles = {
+        'minimalistic': ['minimalistic', 'minimal', 'minimalist', 'simple', 'clean', 'understated'],
+        'trendy': ['trendy', 'fashionable', 'modern', 'contemporary', 'chic'],
+        'vintage': ['vintage', 'retro', '80s', '90s', 'y2k', 'throwback'],
+        'bohemian': ['bohemian', 'boho', 'hippie'],
+        'casual': ['casual', 'everyday', 'relaxed', 'laid-back', 'comfortable', 'cozy'],
+        'grunge': ['grunge', 'edgy', 'punk', 'gothic', 'emo', 'alternative'],
+        'sporty': ['sporty', 'athletic', 'active', 'sport', 'performance'],
+        'streetwear': ['streetwear', 'street', 'urban', 'hip-hop', 'hypebeast'],
+        'business': ['business', 'formal', 'professional', 'elegant', 'sophisticated', 'classy', 'corporate'],
+        'preppy': ['preppy', 'classic', 'timeless', 'traditional'],
+        'luxury': ['luxury', 'high-end', 'designer', 'premium', 'expensive']
+    }
+    
+    for style, keywords in styles.items():
+        if any(keyword in query_lower for keyword in keywords):
+            params['style'] = style
+            break
+    
+    # PRICE - Extract price information
+    # Look for specific dollar amounts
+    price_match = re.search(r'under\s*\$?(\d+)|below\s*\$?(\d+)|less than\s*\$?(\d+)|max\s*\$?(\d+)|maximum\s*\$?(\d+)', query_lower)
+    if price_match:
+        price_value = next((g for g in price_match.groups() if g), None)
+        if price_value:
+            params['max_price'] = int(price_value)
+    
+    # Look for price keywords
+    if any(word in query_lower for word in ['cheap', 'inexpensive', 'affordable', 'budget', 'economical', 'low-cost', 'bargain', 'deal', 'discount']):
+        params['price_range'] = 'cheap'
+        if 'max_price' not in params:
+            params['max_price'] = 50
+    elif any(word in query_lower for word in ['expensive', 'pricey', 'costly', 'high-end', 'luxury', 'premium', 'designer', 'splurge']):
+        params['price_range'] = 'expensive'
+        if 'max_price' not in params:
+            params['min_price'] = 100
+    elif any(word in query_lower for word in ['mid-range', 'moderate', 'reasonable', 'fair price', 'medium price']):
+        params['price_range'] = 'moderate'
+    
+    # OCCASIONS - Comprehensive occasion list
+    occasions = {
+        'wedding': ['wedding', 'bride', 'bridal'],
+        'formal': ['formal event', 'black tie', 'gala', 'prom'],
+        'party': ['party', 'birthday', 'celebration', 'night out', 'clubbing', 'cocktail party'],
+        'work': ['work', 'office', 'business', 'professional', 'interview', 'meeting', 'presentation'],
+        'casual': ['casual', 'everyday', 'daily wear', 'going out', 'hanging out', 'weekend'],
+        'gym': ['gym', 'workout', 'exercise', 'running', 'yoga', 'hiking', 'sports', 'training', 'fitness', 'jogging'],
+        'date': ['date night', 'date', 'romantic', 'anniversary', 'dinner'],
+        'vacation': ['vacation', 'holiday', 'travel', 'beach', 'summer'],
+        'winter': ['winter', 'cold weather', 'snow'],
+        'concert': ['concert', 'festival', 'music festival']
+    }
+    
+    for occasion, keywords in occasions.items():
+        if any(keyword in query_lower for keyword in keywords):
+            params['occasion'] = occasion
+            break
+    
+    # BRANDS - Check if any brand is mentioned (using existing POPULAR_BRANDS list would be ideal, but we'll check common ones)
+    common_brands = ['nike', 'adidas', 'zara', 'h&m', "levi's", 'levis', 'gap', 'uniqlo', 'mango', 
+                     'asos', 'lululemon', 'patagonia', 'north face', 'vans', 'converse', 'puma', 
+                     'reebok', 'supreme', 'gucci', 'louis vuitton', 'prada', 'chanel']
+    
+    for brand in common_brands:
+        if brand in query_lower:
+            params['brand'] = brand
+            break
+    
+    # FIT - Comprehensive fit types
+    fits = {
+        'oversized': ['oversized', 'wide', 'baggy', 'loose'],
+        'relaxed': ['relaxed'],
+        'regular': ['regular', 'standard', 'normal'],
+        'slim': ['slim', 'skinny', 'tight', 'fitted', 'tailored'],
+        'bootcut': ['bootcut'],
+        'straight': ['straight leg', 'straight'],
+        'tapered': ['tapered'],
+        'flared': ['flared', 'flare']
+    }
+    
+    for fit, keywords in fits.items():
+        if any(keyword in query_lower for keyword in keywords):
+            params['fit'] = fit
+            break
+    
+    # MATERIALS - Comprehensive material list
+    materials = ['cotton', 'denim', 'leather', 'suede', 'wool', 'cashmere', 'silk', 
+                'satin', 'polyester', 'nylon', 'spandex', 'fleece', 'velvet', 'linen']
+    
+    for material in materials:
+        if material in query_lower:
+            params['material'] = material
+            break
+    
+    print(f"🔍 Parsed query parameters: {params}")
+    return params
 
 def search_database(query: str, user_id: str = None):
-    """Search database with optional personalization based on user preferences"""
+    """
+    Search database with smart query parsing and optional personalization
+    Extracts: category, color, style, price, occasion, brand, fit from natural language
+    """
     conn = get_db_connection()
     if not conn:
         print("No database connection available")
@@ -250,7 +292,9 @@ def search_database(query: str, user_id: str = None):
     
     try:
         cursor = conn.cursor()
-        query_lower = query.lower()
+        
+        # Parse the query to extract parameters
+        parsed_params = parse_search_query(query)
         
         # Get user preferences if user_id is provided
         user_prefs = None
@@ -259,75 +303,125 @@ def search_database(query: str, user_id: str = None):
         
         # Build base SQL query
         sql = """
-            SELECT id, name, brand, price, color, fit, category, image_url, product_url, affiliate_link
+            SELECT id, name, brand, price, color, fit, category, style, image_url, product_url, affiliate_link
             FROM products
-            WHERE (LOWER(name) LIKE %s OR LOWER(brand) LIKE %s OR LOWER(color) LIKE %s OR LOWER(category) LIKE %s OR LOWER(fit) LIKE %s)
+            WHERE 1=1
         """
-        params = [f"%{query_lower}%"] * 5
+        params = []
         
-        # Apply personalization filters if user preferences exist
+        # Apply PARSED parameters from query
+        
+        # Category filter (from parsed query)
+        if 'category' in parsed_params:
+            sql += " AND LOWER(category) = %s"
+            params.append(parsed_params['category'].lower())
+            print(f"   🏷️  Category: {parsed_params['category']}")
+        
+        # Color filter (from parsed query)
+        if 'color' in parsed_params:
+            sql += " AND LOWER(color) = %s"
+            params.append(parsed_params['color'].lower())
+            print(f"   🎨 Color: {parsed_params['color']}")
+        
+        # Style filter (from parsed query)
+        if 'style' in parsed_params:
+            sql += " AND LOWER(style) = %s"
+            params.append(parsed_params['style'].lower())
+            print(f"   ✨ Style: {parsed_params['style']}")
+        
+        # Brand filter (from parsed query)
+        if 'brand' in parsed_params:
+            sql += " AND (LOWER(REPLACE(brand, '\"', '')) = %s OR LOWER(brand) = %s)"
+            params.extend([parsed_params['brand'].lower(), parsed_params['brand'].lower()])
+            print(f"   🏢 Brand: {parsed_params['brand']}")
+        
+        # Fit filter (from parsed query)
+        if 'fit' in parsed_params:
+            sql += " AND LOWER(fit) = %s"
+            params.append(parsed_params['fit'].lower())
+            print(f"   👔 Fit: {parsed_params['fit']}")
+        
+        # Price filters (from parsed query)
+        if 'max_price' in parsed_params:
+            sql += " AND price <= %s"
+            params.append(parsed_params['max_price'])
+            print(f"   💰 Max price: ${parsed_params['max_price']}")
+        
+        if 'min_price' in parsed_params:
+            sql += " AND price >= %s"
+            params.append(parsed_params['min_price'])
+            print(f"   💰 Min price: ${parsed_params['min_price']}")
+        
+        # If NO specific parsed parameters, fall back to broad text search
+        if not any(key in parsed_params for key in ['category', 'color', 'style', 'brand', 'fit']):
+            query_lower = query.lower()
+            sql += " AND (LOWER(name) LIKE %s OR LOWER(brand) LIKE %s OR LOWER(color) LIKE %s OR LOWER(category) LIKE %s OR LOWER(fit) LIKE %s)"
+            params.extend([f"%{query_lower}%"] * 5)
+            print(f"   🔍 Broad text search: {query}")
+        
+        # Apply PERSONALIZATION filters if user preferences exist
         if user_prefs:
             print("🎯 Applying personalization filters...")
             
-            # Filter by favorite brands
-            favorite_brands = user_prefs.get('favorite_brands', [])
-            if favorite_brands and len(favorite_brands) > 0:
-                brand_placeholders = ','.join(['%s'] * len(favorite_brands))
-                sql += f" AND (LOWER(REPLACE(brand, '\"', '')) IN ({brand_placeholders}) OR LOWER(brand) IN ({brand_placeholders}))"
-                # Add each brand twice (once as-is, once for the replace check)
-                brand_list = [brand.lower() for brand in favorite_brands]
-                params.extend(brand_list + brand_list)
-                print(f"   - Filtering by brands: {', '.join(favorite_brands)}")
+            # Filter by favorite brands (ONLY if brand not already specified in query)
+            if 'brand' not in parsed_params:
+                favorite_brands = user_prefs.get('favorite_brands', [])
+                if favorite_brands and len(favorite_brands) > 0:
+                    brand_placeholders = ','.join(['%s'] * len(favorite_brands))
+                    sql += f" AND (LOWER(REPLACE(brand, '\"', '')) IN ({brand_placeholders}) OR LOWER(brand) IN ({brand_placeholders}))"
+                    brand_list = [brand.lower() for brand in favorite_brands]
+                    params.extend(brand_list + brand_list)
+                    print(f"   - Filtering by user's brands: {', '.join(favorite_brands)}")
             
-            # Filter by favorite styles
-            favorite_styles = user_prefs.get('favorite_styles', [])
-            if favorite_styles and len(favorite_styles) > 0:
-                style_placeholders = ','.join(['%s'] * len(favorite_styles))
-                sql += f" AND LOWER(style) IN ({style_placeholders})"
-                params.extend([style.lower() for style in favorite_styles])
-                print(f"   - Filtering by styles: {', '.join(favorite_styles)}")
+            # Filter by favorite styles (ONLY if style not already specified in query)
+            if 'style' not in parsed_params:
+                favorite_styles = user_prefs.get('favorite_styles', [])
+                if favorite_styles and len(favorite_styles) > 0:
+                    style_placeholders = ','.join(['%s'] * len(favorite_styles))
+                    sql += f" AND LOWER(style) IN ({style_placeholders})"
+                    params.extend([style.lower() for style in favorite_styles])
+                    print(f"   - Filtering by user's styles: {', '.join(favorite_styles)}")
             
-            # Filter by fit preferences based on category
-            fit_prefs_tops = user_prefs.get('fit_preferences_tops', {})
-            fit_prefs_bottoms = user_prefs.get('fit_preferences_bottoms', {})
-            
-            # Detect if query is for tops or bottoms
-            top_keywords = ['shirt', 'top', 'hoodie', 'sweater', 'jacket', 'blouse', 'tshirt', 't-shirt', 'sweatshirt']
-            bottom_keywords = ['jean', 'trouser', 'pant', 'short', 'skirt', 'chino', 'sweatpant']
-            
-            is_top_query = any(keyword in query_lower for keyword in top_keywords)
-            is_bottom_query = any(keyword in query_lower for keyword in bottom_keywords)
-            
-            # Apply fit filters
-            if is_top_query and fit_prefs_tops:
-                # Collect all preferred fits from tops preferences
-                preferred_fits = []
-                for category_fits in fit_prefs_tops.values():
-                    if isinstance(category_fits, list):
-                        preferred_fits.extend(category_fits)
+            # Filter by fit preferences (ONLY if fit not already specified in query)
+            if 'fit' not in parsed_params and 'category' in parsed_params:
+                fit_prefs_tops = user_prefs.get('fit_preferences_tops', {})
+                fit_prefs_bottoms = user_prefs.get('fit_preferences_bottoms', {})
                 
-                if preferred_fits:
-                    # Remove duplicates
-                    preferred_fits = list(set(preferred_fits))
-                    fit_placeholders = ','.join(['%s'] * len(preferred_fits))
-                    sql += f" AND LOWER(fit) IN ({fit_placeholders})"
-                    params.extend([fit.lower() for fit in preferred_fits])
-                    print(f"   - Filtering by top fits: {', '.join(preferred_fits)}")
-            
-            elif is_bottom_query and fit_prefs_bottoms:
-                # Collect all preferred fits from bottoms preferences
-                preferred_fits = []
-                for category_fits in fit_prefs_bottoms.values():
-                    if isinstance(category_fits, list):
-                        preferred_fits.extend(category_fits)
+                # Top categories
+                top_categories = ['shirt', 't-shirt', 'blouse', 'tank top', 'crop top', 'sweater', 
+                                'cardigan', 'hoodie', 'sweatshirt', 'jacket', 'blazer', 'coat', 'vest']
+                # Bottom categories
+                bottom_categories = ['jeans', 'pants', 'chinos', 'shorts', 'skirt', 'leggings', 
+                                    'joggers', 'sweatpants', 'cargo pants']
                 
-                if preferred_fits:
-                    # Remove duplicates
-                    preferred_fits = list(set(preferred_fits))
-                    fit_placeholders = ','.join(['%s'] * len(preferred_fits))
-                    sql += f" AND LOWER(fit) IN ({fit_placeholders})"
-                    params.extend([fit.lower() for fit in preferred_fits])
-                    print(f"   - Filtering by bottom fits: {', '.join(preferred_fits)}")
+                is_top_category = parsed_params['category'] in top_categories
+                is_bottom_category = parsed_params['category'] in bottom_categories
+                
+                if is_top_category and fit_prefs_tops:
+                    preferred_fits = []
+                    for category_fits in fit_prefs_tops.values():
+                        if isinstance(category_fits, list):
+                            preferred_fits.extend(category_fits)
+                    
+                    if preferred_fits:
+                        preferred_fits = list(set(preferred_fits))
+                        fit_placeholders = ','.join(['%s'] * len(preferred_fits))
+                        sql += f" AND LOWER(fit) IN ({fit_placeholders})"
+                        params.extend([fit.lower() for fit in preferred_fits])
+                        print(f"   - Filtering by user's top fits: {', '.join(preferred_fits)}")
+                
+                elif is_bottom_category and fit_prefs_bottoms:
+                    preferred_fits = []
+                    for category_fits in fit_prefs_bottoms.values():
+                        if isinstance(category_fits, list):
+                            preferred_fits.extend(category_fits)
+                    
+                    if preferred_fits:
+                        preferred_fits = list(set(preferred_fits))
+                        fit_placeholders = ','.join(['%s'] * len(preferred_fits))
+                        sql += f" AND LOWER(fit) IN ({fit_placeholders})"
+                        params.extend([fit.lower() for fit in preferred_fits])
+                        print(f"   - Filtering by user's bottom fits: {', '.join(preferred_fits)}")
         
         sql += " LIMIT 50"
         
@@ -343,13 +437,16 @@ def search_database(query: str, user_id: str = None):
             product['retailer'] = product.get('brand', 'Online Store')
             products.append(product)
         
-        print(f"Database search found {len(products)} products{' (personalized)' if user_prefs else ''}")
+        search_type = "smart parsed" if parsed_params else "text search"
+        print(f"✅ Database search found {len(products)} products ({search_type}{', personalized' if user_prefs else ''})")
         cursor.close()
         conn.close()
         return products
         
     except Exception as e:
-        print("Database search error:", str(e))
+        print(f"❌ Database search error: {e}")
+        import traceback
+        traceback.print_exc()
         if conn:
             conn.close()
         return []
@@ -473,224 +570,34 @@ async def search_products(request: Request):
 @app.post("/api/track")
 async def track_interaction(request: Request):
     """
-    Track user interactions (clicks, favorites, views, searches)
+    Track user interactions with products (clicks, favorites, views)
     This data is used to learn user preferences and improve recommendations
     """
     try:
         body = await request.json()
         user_id = body.get("user_id")
-        product_id = body.get("product_id")  # Optional for search tracking
-        action = body.get("action")  # 'clicked', 'favorited', 'viewed', 'searched'
-        metadata = body.get("metadata")  # Optional: for storing search queries, etc.
+        product_id = body.get("product_id")
+        action = body.get("action")  # 'clicked', 'favorited', 'viewed'
         
-        if not user_id or not action:
-            raise HTTPException(status_code=400, detail="user_id and action are required")
+        if not user_id or not product_id or not action:
+            raise HTTPException(status_code=400, detail="user_id, product_id, and action are required")
         
         if not supabase_admin:
             print("⚠️ Supabase admin not initialized, cannot track interaction")
             return {"success": False, "message": "Tracking not available"}
         
-        # Build interaction data
-        interaction_data = {
-            'user_id': user_id,
-            'action': action
-        }
-        
-        # Add product_id if provided (for clicks, favorites, views)
-        if product_id:
-            interaction_data['product_id'] = str(product_id)
-        
-        # Add metadata if provided (for search queries, etc.)
-        if metadata:
-            interaction_data['metadata'] = metadata
-        
         # Save interaction to Supabase using admin client (bypasses RLS)
-        supabase_admin.table('user_interactions').insert(interaction_data).execute()
+        supabase_admin.table('user_interactions').insert({
+            'user_id': user_id,
+            'product_id': str(product_id),
+            'action': action
+        }).execute()
         
-        # Log with appropriate message
-        if action == 'searched' and metadata:
-            print(f"✅ Tracked: User {user_id[:8]}... searched for '{metadata.get('query', 'unknown')}'")
-        elif product_id:
-            print(f"✅ Tracked: User {user_id[:8]}... {action} product {product_id}")
-        else:
-            print(f"✅ Tracked: User {user_id[:8]}... {action}")
-        
+        print(f"✅ Tracked: User {user_id[:8]}... {action} product {product_id}")
         return {"success": True}
         
     except Exception as e:
         print(f"Error tracking interaction: {e}")
         raise HTTPException(status_code=500, detail="Tracking failed: " + str(e))
 
-@app.get("/api/recommendations/{user_id}")
-async def get_recommendations(user_id: str, limit: int = 8, category: str = None):
-    """
-    Get personalized product recommendations based on user's click history
-    Returns products similar to what the user has clicked on
-    
-    Args:
-        user_id: User ID to get recommendations for
-        limit: Maximum number of recommendations (default: 8)
-        category: Optional category filter (e.g., 'jeans', 'tops') to restrict recommendations
-    """
-    try:
-        if not user_id:
-            raise HTTPException(status_code=400, detail="user_id is required")
-        
-        print(f"\n{'='*50}")
-        print(f"🎯 Getting recommendations for user: {user_id[:8]}...")
-        if category:
-            print(f"   Category filter: {category}")
-        print(f"{'='*50}")
-        
-        # Get user preferences for additional filtering
-        user_prefs = get_user_preferences(user_id)
-        
-        # Get user's click history
-        clicked_product_ids = get_user_click_history(user_id, limit=10)
-        
-        if not clicked_product_ids:
-            print("ℹ️ No click history found - returning style-based recommendations")
-            
-            # If no click history, recommend based on user preferences only
-            if user_prefs:
-                conn = get_db_connection()
-                if conn:
-                    try:
-                        cursor = conn.cursor()
-                        
-                        sql = "SELECT id, name, brand, price, color, fit, category, style, image_url, product_url, affiliate_link FROM products WHERE 1=1"
-                        params = []
-                        
-                        # Filter by favorite brands
-                        favorite_brands = user_prefs.get('favorite_brands', [])
-                        if favorite_brands:
-                            brand_placeholders = ','.join(['%s'] * len(favorite_brands))
-                            sql += f" AND (LOWER(REPLACE(brand, '\"', '')) IN ({brand_placeholders}) OR LOWER(brand) IN ({brand_placeholders}))"
-                            brand_list = [b.lower() for b in favorite_brands]
-                            params.extend(brand_list + brand_list)
-                        
-                        # Filter by favorite styles
-                        favorite_styles = user_prefs.get('favorite_styles', [])
-                        if favorite_styles:
-                            style_placeholders = ','.join(['%s'] * len(favorite_styles))
-                            sql += f" AND LOWER(style) IN ({style_placeholders})"
-                            params.extend([s.lower() for s in favorite_styles])
-                        
-                        # Apply category filter if provided
-                        if category:
-                            sql += " AND LOWER(category) = %s"
-                            params.append(category.lower())
-                        
-                        sql += f" ORDER BY RANDOM() LIMIT {limit}"
-                        
-                        cursor.execute(sql, params)
-                        results = cursor.fetchall()
-                        
-                        recommendations = []
-                        for row in results:
-                            product = dict(row)
-                            product['retailer'] = product.get('brand', 'Online Store')
-                            product['recommended_reason'] = 'Matches your style'
-                            recommendations.append(product)
-                        
-                        cursor.close()
-                        conn.close()
-                        
-                        print(f"💡 Found {len(recommendations)} style-based recommendations")
-                        
-                        return {
-                            "user_id": user_id,
-                            "total_recommendations": len(recommendations),
-                            "recommendations": recommendations,
-                            "source": "style_based",
-                            "category_filter": category
-                        }
-                    except Exception as e:
-                        print(f"❌ Error getting style-based recommendations: {e}")
-                        if conn:
-                            conn.close()
-            
-            return {
-                "user_id": user_id,
-                "total_recommendations": 0,
-                "recommendations": [],
-                "source": "none",
-                "message": "No recommendations available yet. Browse and click on products to get personalized recommendations!"
-            }
-        
-        # Get similar products based on click history (with optional category filter)
-        recommendations = get_similar_products(clicked_product_ids, user_prefs, limit, category_filter=category)
-        
-        return {
-            "user_id": user_id,
-            "total_recommendations": len(recommendations),
-            "recommendations": recommendations,
-            "source": "click_based",
-            "based_on_clicks": len(clicked_product_ids),
-            "category_filter": category
-        }
-        
-    except Exception as e:
-        print(f"Error getting recommendations: {e}")
-        raise HTTPException(status_code=500, detail="Recommendation failed: " + str(e))
-
-@app.get("/api/searches/{user_id}")
-async def get_recent_searches(user_id: str, limit: int = 5):
-    """
-    Get user's recent search queries
-    Returns the last N unique search queries ordered by recency
-    """
-    try:
-        if not user_id:
-            raise HTTPException(status_code=400, detail="user_id is required")
-        
-        print(f"\n{'='*50}")
-        print(f"🔍 Fetching recent searches for user: {user_id[:8]}...")
-        print(f"{'='*50}")
-        
-        if not supabase_admin:
-            print("⚠️ Supabase admin not initialized")
-            return {"user_id": user_id, "searches": []}
-        
-        # Query user_interactions for recent searches
-        response = supabase_admin.table('user_interactions')\
-            .select('metadata, created_at')\
-            .eq('user_id', user_id)\
-            .eq('action', 'searched')\
-            .order('created_at', desc=True)\
-            .limit(limit * 2)\
-            .execute()
-        
-        if not response.data:
-            print("ℹ️ No search history found")
-            return {"user_id": user_id, "searches": []}
-        
-        # Extract unique search queries (preserve order)
-        seen_queries = set()
-        unique_searches = []
-        
-        for item in response.data:
-            if item.get('metadata') and isinstance(item['metadata'], dict):
-                query = item['metadata'].get('query')
-                if query and query.lower() not in seen_queries:
-                    seen_queries.add(query.lower())
-                    unique_searches.append({
-                        'query': query,
-                        'searched_at': item.get('created_at')
-                    })
-                    
-                    if len(unique_searches) >= limit:
-                        break
-        
-        print(f"✅ Found {len(unique_searches)} recent searches")
-        
-        return {
-            "user_id": user_id,
-            "total_searches": len(unique_searches),
-            "searches": unique_searches
-        }
-        
-    except Exception as e:
-        print(f"Error getting recent searches: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get recent searches: " + str(e))
         
