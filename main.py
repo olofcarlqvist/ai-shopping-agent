@@ -633,4 +633,64 @@ async def get_recommendations(user_id: str, limit: int = 8, category: str = None
     except Exception as e:
         print(f"Error getting recommendations: {e}")
         raise HTTPException(status_code=500, detail="Recommendation failed: " + str(e))
+
+@app.get("/api/searches/{user_id}")
+async def get_recent_searches(user_id: str, limit: int = 5):
+    """
+    Get user's recent search queries
+    Returns the last N unique search queries ordered by recency
+    """
+    try:
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+        
+        print(f"\n{'='*50}")
+        print(f"🔍 Fetching recent searches for user: {user_id[:8]}...")
+        print(f"{'='*50}")
+        
+        if not supabase_admin:
+            print("⚠️ Supabase admin not initialized")
+            return {"user_id": user_id, "searches": []}
+        
+        # Query user_interactions for recent searches
+        response = supabase_admin.table('user_interactions')\
+            .select('metadata, created_at')\
+            .eq('user_id', user_id)\
+            .eq('action', 'searched')\
+            .order('created_at', desc=True)\
+            .limit(limit * 2)\
+            .execute()
+        
+        if not response.data:
+            print("ℹ️ No search history found")
+            return {"user_id": user_id, "searches": []}
+        
+        # Extract unique search queries (preserve order)
+        seen_queries = set()
+        unique_searches = []
+        
+        for item in response.data:
+            if item.get('metadata') and isinstance(item['metadata'], dict):
+                query = item['metadata'].get('query')
+                if query and query.lower() not in seen_queries:
+                    seen_queries.add(query.lower())
+                    unique_searches.append({
+                        'query': query,
+                        'searched_at': item.get('created_at')
+                    })
+                    
+                    if len(unique_searches) >= limit:
+                        break
+        
+        print(f"✅ Found {len(unique_searches)} recent searches")
+        
+        return {
+            "user_id": user_id,
+            "total_searches": len(unique_searches),
+            "searches": unique_searches
+        }
+        
+    except Exception as e:
+        print(f"Error getting recent searches: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get recent searches: " + str(e))
         
