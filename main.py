@@ -517,6 +517,16 @@ def search_database(query: str, user_id: str = None):
         if user_prefs:
             print("🎯 Applying personalization filters...")
             
+            # Filter by user's gender preference (from onboarding)
+            user_gender = user_prefs.get('gender')
+            if user_gender:
+                if user_gender.lower() == 'man':
+                    sql += " AND (gender = 'men' OR gender = 'unisex')"
+                    print(f"   - Filtering by gender: men + unisex")
+                elif user_gender.lower() == 'woman':
+                    sql += " AND (gender = 'women' OR gender = 'unisex')"
+                    print(f"   - Filtering by gender: women + unisex")
+            
             # Filter by favorite brands (ONLY if brand not already specified in query)
             if 'brand' not in parsed_params:
                 favorite_brands = user_prefs.get('favorite_brands', [])
